@@ -1,0 +1,14 @@
+This is a Patricia Trie implementation in Cilk++
+
+License: BSD
+
+Data races can be found with cilkscreen.
+Example:
+cilkscreen -a ./patricia
+
+You could different workers to experiment.
+
+Examples:
+./patricia -cilk_set_worker_count 1
+./patricia -cilk_set_worker_count 2
+./patricia -cilk_set_worker_count 4

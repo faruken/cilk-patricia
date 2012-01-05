@@ -1,0 +1,278 @@
+/*
+ *
+ *  Patricia Trie implementation in Cilk++.
+ *
+ *  Released under BSD License.
+ *  Feel free to improve/fix. :)
+ *
+ *  Data races can be found with cilkscreen.
+ *  example: cilkscreen -a ./patricia
+ *
+ *  You could different workers to experiment.
+ *  example:  ./patricia -cilk_set_worker_count 1
+ *            ./patricia -cilk_set_worker_count 2
+ *            ./patricia -cilk_set_worker_count 4
+ *
+ *
+*/
+
+
+#include <iostream>
+#include <ostream>
+#include <sstream>
+#include <algorithm>
+#include <vector>
+
+#include <cilk.h>
+#include <cilkview.h>
+
+
+using namespace std;
+
+
+template<typename K, typename T>
+class INode {
+public:
+  virtual ~INode() {}
+  virtual unsigned hash(K key, unsigned bit) = 0;
+};
+
+template<typename T>
+class StringKeyNode: public INode<string, T> {
+
+private:
+  static const int SIZE = sizeof(string) << 2;
+  
+public:
+
+  string key;
+  T value;
+  int bit;
+  StringKeyNode<T>* left;
+  StringKeyNode<T>* right;
+  
+  StringKeyNode(string key, T value, int bit) {
+    this->key = key;
+    this->value = value;
+    this->bit = bit;
+  }
+  
+  ~StringKeyNode() {
+    this->left = NULL;
+    this->right = NULL;
+    this->bit = -1;
+    this->value = NULL;
+  }
+  
+  virtual unsigned hash(string key, unsigned i) {
+    if(key.empty()) return 0;
+    unsigned index = static_cast<unsigned>(i / SIZE);
+    if(index >= key.length()) return 0;
+    unsigned val = (1 << SIZE - 1) >> (i & SIZE - 1);
+    return key.at(index) & val;
+  }
+};
+
+template<typename K, typename T>
+class ITree {
+public:
+
+  virtual ~ITree() {}
+
+protected:
+  virtual INode<K, T>* search_inner(INode<K, T>* node, K key, int i);
+  virtual INode<K, T>* insert_inner(INode<K, T>* node, K key, T value, int i, INode<K, T>* root);
+};
+
+template<typename K, typename T>
+class StringKeyTree {
+
+private:
+  
+  StringKeyNode<T>* root;
+  
+  StringKeyNode<T>* search_inner(StringKeyNode<T>* node, K key, int i) {
+    if(node->bit <= i) return node;
+    if(node->hash(key, node->bit) == 0) {
+      return search_inner(node->left, key, node->bit);
+    } else {
+      return search_inner(node->right, key, node->bit);
+    }
+  }
+  
+  StringKeyNode<T>* insert_inner(StringKeyNode<T>* node,
+                                  K key,
+                                  T value,
+                                  int i,
+                                  StringKeyNode<T>* root) {
+    if(node->bit >= i || node->bit <= root->bit) {
+      StringKeyNode<T>* temp = new StringKeyNode<T>(key, value, i);
+      const bool FLAG = node->hash(key, temp->bit) != 0;
+      temp->left = FLAG ? node : temp;
+      temp->right = FLAG ? temp : node;
+      return temp;
+      delete temp;
+    }
+    if(node->hash(key, node->bit) == 0) {
+      node->left = cilk_spawn insert_inner(node->left, key, value, i, node);
+    } else {
+      node->right = insert_inner(node->right, key, value, i, node);
+    }
+    cilk_sync;
+    return node;
+  }
+  
+  string toString_inner(StringKeyNode<T>* node, int i) {
+    if(node == this->root) return "";
+    if(node->bit <= i) return node->value->toString() + "\n";
+    return toString_inner(node->left, node->bit) + toString_inner(node->right,
+                                                                  node->bit);
+  }
+  
+  int size_inner(StringKeyNode<T>* node, int i) {
+    if(node == this->root || node->bit <= i) return 0;
+    return 1 + size_inner(node->left, node->bit) + size_inner(node->right,
+                                                              node->bit);
+  }
+  
+  int maxDepth_inner(StringKeyNode<T>* node, int i) {
+    if(node == NULL || node->bit <= i) return 0;
+    else {
+      int left = maxDepth_inner(node->left, node->bit);
+      int right = maxDepth_inner(node->right, node->bit);
+      return 1 + max(left, right);
+    }
+  }
+  
+public:
+  StringKeyTree() {
+    this->root = new StringKeyNode<T>("", NULL, -1);
+    this->root->left = this->root;
+  }
+  
+  ~StringKeyTree() {
+    this->root = NULL;
+    delete this->root;
+  }
+  
+  T search(string key) {
+    StringKeyNode<T>* node;
+    node = cilk_spawn search_inner(this->root->left, key, -1);
+    cilk_sync;
+    if(node == NULL || node->key != key) return NULL;
+    return node->value;
+    delete node;
+  }
+  
+  void insert(string key, T value) {
+    StringKeyNode<T>* node = search_inner(this->root->left, key, -1);
+    if(node != NULL) {
+      string temp = node->key;
+      if(temp.compare(key) != 0) {
+        int i = 0;
+        while(node->hash(key, i) == node->hash(temp, i)) ++i;
+        this->root->left = cilk_spawn insert_inner(this->root->left,
+                                                    key,
+                                                    value,
+                                                    i,
+                                                    this->root);
+        cilk_sync;
+      } else {
+        node->value = value;
+      }
+    }
+  }
+  
+  int size() {
+    return this->size_inner(this->root->left, -1);
+  }
+  
+  int maxDepth() {
+    return this->maxDepth_inner(this->root->left, -1);
+  }
+  
+  string toString() {
+    return toString_inner(this->root->left, -1);
+  }
+};
+
+
+class Person {
+public:
+  string firstname, lastname;
+  
+  Person(string firstname, string lastname) {
+    this->firstname = firstname;
+    this->lastname = lastname;
+  }
+  
+  friend ostream& operator<<(ostream& o, const Person& p) {
+    return o << p.firstname << " " << p.lastname;
+  }
+  
+  string toString() {
+    return this->firstname + " " + this->lastname;
+  }
+};
+
+vector<string> generate_names(string s) {
+  vector<char>v(s.begin(), s.end());
+  vector<string> e;
+  e.push_back(s);
+  while(next_permutation(v.begin(), v.end())) {
+    stringstream ss;
+    for(unsigned i = 0; i < v.size(); i++) ss << v[i];
+    e.push_back(ss.str());
+  }
+  return e;
+}
+
+int factorial(int n) {
+  int res = 1;
+  for(int i = 1; i <= n; i++) res *= i;
+  return res;
+}
+
+int cilk_main() {
+
+  cilk::cilkview cv;
+
+  Person* p = new Person("milla", "jovovich");
+
+  string generator = "abc";
+  const int LENGTH = factorial(generator.length());
+  vector<string> names = generate_names(generator);
+  
+  StringKeyTree<string, Person*>* tree = new StringKeyTree<string, Person*>();
+
+  cv.start();
+  
+  tree->insert(p->firstname, p);
+  
+  for(int i = 0; i < LENGTH; i++)
+    tree->insert(names[i], new Person(names[i], names[i]));
+  
+  cv.stop();
+
+  cout << "tree filled in " << cv.accumulated_milliseconds() / 1000.f << " seconds.\n";
+  cv.reset();
+  
+  cout << "tree size: " << tree->size() << "\n";
+  cout << "tree depth: " << tree->maxDepth() << "\n";
+  cout << "\nnodes:\n" << tree->toString();
+
+  string search_s = "milla";
+  cv.start();
+  Person* p1 = tree->search(search_s);
+  cout << "\nsearching for key: " << search_s << "\n";
+  p1 != NULL ? cout << "found: " << *p1 << "\n" : cout << "\nnot found\n";
+
+  cv.stop();
+//  cv.dump("res", false);
+  cout << "\nsearch: " << cv.accumulated_milliseconds() / 1000.f << " seconds\n";
+  
+  delete p;
+  delete tree;
+  
+  return 0;
+}
