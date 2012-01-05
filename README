@@ -6,7 +6,7 @@ Data races can be found with cilkscreen.
 Example:
 cilkscreen -a ./patricia
 
-You could different workers to experiment.
+You could use different workers to experiment.
 
 Examples:
 ./patricia -cilk_set_worker_count 1
