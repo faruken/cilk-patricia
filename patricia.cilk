@@ -8,10 +8,10 @@
  *  Data races can be found with cilkscreen.
  *  example: cilkscreen -a ./patricia
  *
- *  You could different workers to experiment.
- *  example:  ./patricia -cilk_set_worker_count 1
- *            ./patricia -cilk_set_worker_count 2
- *            ./patricia -cilk_set_worker_count 4
+ *  You could use different workers to experiment.
+ *  example:  ./patricia -cilk_set_worker_count=1
+ *            ./patricia -cilk_set_worker_count=2
+ *            ./patricia -cilk_set_worker_count=4
  *
  *
 */
@@ -144,6 +144,14 @@ private:
     }
   }
   
+  void rotate_inner(StringKeyNode<T>* node, int bit) {
+    if(node != NULL && node->bit > bit) {
+      rotate_inner(node->left, node->bit);
+      rotate_inner(node->right, node->bit);
+      swap(node->left, node->right);
+    }
+  }
+
 public:
   StringKeyTree() {
     this->root = new StringKeyNode<T>("", NULL, -1);
@@ -185,6 +193,10 @@ public:
   
   int size() {
     return this->size_inner(this->root->left, -1);
+  }
+  
+  void rotate() {
+    rotate_inner(this->root->left, -1);
   }
   
   int maxDepth() {
@@ -260,7 +272,17 @@ int cilk_main() {
   cout << "tree size: " << tree->size() << "\n";
   cout << "tree depth: " << tree->maxDepth() << "\n";
   cout << "\nnodes:\n" << tree->toString();
+  
+  cv.start();
+  tree->rotate();
+  cout << "tree rotated in " << cv.accumulated_milliseconds() / 1000.f << " seconds.\n";
+  cv.reset();
+  
+  cout << tree->toString();
 
+  //re-rotating the tree, otherwise search won't work.
+  tree->rotate();
+  
   string search_s = "milla";
   cv.start();
   Person* p1 = tree->search(search_s);
@@ -270,7 +292,7 @@ int cilk_main() {
   cv.stop();
 //  cv.dump("res", false);
   cout << "\nsearch: " << cv.accumulated_milliseconds() / 1000.f << " seconds\n";
-  
+
   delete p;
   delete tree;
   
