@@ -146,8 +146,9 @@ private:
   
   void rotate_inner(StringKeyNode<T>* node, int bit) {
     if(node != NULL && node->bit > bit) {
-      rotate_inner(node->left, node->bit);
+      cilk_spawn rotate_inner(node->left, node->bit);
       rotate_inner(node->right, node->bit);
+      cilk_sync;
       swap(node->left, node->right);
     }
   }
@@ -173,7 +174,9 @@ public:
   }
   
   void insert(string key, T value) {
-    StringKeyNode<T>* node = search_inner(this->root->left, key, -1);
+    StringKeyNode<T>* node;
+    node = cilk_spawn search_inner(this->root->left, key, -1);
+    cilk_sync;
     if(node != NULL) {
       string temp = node->key;
       if(temp.compare(key) != 0) {
@@ -196,7 +199,8 @@ public:
   }
   
   void rotate() {
-    rotate_inner(this->root->left, -1);
+    cilk_spawn rotate_inner(this->root->left, -1);
+    cilk_sync;
   }
   
   int maxDepth() {
@@ -228,6 +232,7 @@ public:
 };
 
 vector<string> generate_names(string s) {
+  // generating some strings to put into trie.
   vector<char>v(s.begin(), s.end());
   vector<string> e;
   e.push_back(s);
@@ -260,10 +265,10 @@ int cilk_main() {
   cv.start();
   
   tree->insert(p->firstname, p);
-  
+
   for(int i = 0; i < LENGTH; i++)
     tree->insert(names[i], new Person(names[i], names[i]));
-  
+
   cv.stop();
 
   cout << "tree filled in " << cv.accumulated_milliseconds() / 1000.f << " seconds.\n";
@@ -294,6 +299,7 @@ int cilk_main() {
   cout << "\nsearch: " << cv.accumulated_milliseconds() / 1000.f << " seconds\n";
 
   delete p;
+  delete p1;
   delete tree;
   
   return 0;
